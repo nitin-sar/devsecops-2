@@ -19,12 +19,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: yarn
@@ -134,7 +134,7 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Checkout source for image publication
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Build and push SHA-tagged image to ECR
         env:
