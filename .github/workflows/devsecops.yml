@@ -1,203 +1,220 @@
-name: DevSecOps CI/CD
+name: DevSecOps Pipeline
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - master
+
   pull_request:
-    branches: [main]
+    branches:
+      - main
+      - master
 
 permissions:
   contents: read
 
 env:
-  NODE_VERSION: '20'
+  NODE_VERSION: "20"
   IMAGE_NAME: dev-radar-backend
+
+  # AWS
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: public.ecr.aws/u1g0y0f1
+  ECR_REPOSITORY: 3-tier
+
+  # Nexus
+  NEXUS_REPOSITORY: trivy-reports
+
+
+# ============================================================
+# JOB 1
+# VERIFY + ANALYZE + SCAN
+# ============================================================
 
 jobs:
 
-  # ============================================================
-  # 1. VERIFY, ANALYZE AND SCAN
-  # ============================================================
-  verify-and-scan:
+  verify-analyze-scan:
+
     name: Verify, analyze, and scan
+
     runs-on: ubuntu-latest
 
     steps:
 
       # --------------------------------------------------------
-      # Checkout source code
+      # 1. CHECKOUT
       # --------------------------------------------------------
+
       - name: Checkout source
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
+        uses: actions/checkout@v4
+
 
       # --------------------------------------------------------
-      # Setup Node.js
+      # 2. SETUP NODE
       # --------------------------------------------------------
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
 
       # --------------------------------------------------------
-      # Install dependencies
+      # 3. INSTALL DEPENDENCIES
       # --------------------------------------------------------
+
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: npm ci
+
 
       # --------------------------------------------------------
-      # NPM Audit
+      # 4. RUN TESTS
       # --------------------------------------------------------
-      - name: Run npm audit
-        run: |
-          mkdir -p reports
 
-          npm install \
-            --package-lock-only \
-            --ignore-scripts \
-            --no-audit
+      - name: Run tests
+        run: npm test -- --runInBand
 
-          npm audit \
-            --audit-level=high \
-            --json > reports/npm-audit.json || true
 
       # --------------------------------------------------------
-      # Run tests
+      # 5. SONARQUBE
       # --------------------------------------------------------
-      - name: Run tests and collect coverage
-        run: yarn test
 
-      # --------------------------------------------------------
-      # SonarQube Scan
-      # Temporarily disabled
-      # --------------------------------------------------------
-      - name: SonarQube scan
-        if: false
-        uses: SonarSource/sonarqube-scan-action@v7.1.0
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v6
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
-      # --------------------------------------------------------
-      # SonarQube Quality Gate
-      # Temporarily disabled
-      # --------------------------------------------------------
-      - name: SonarQube quality gate
-        if: false
-        uses: SonarSource/sonarqube-quality-gate-action@v1.2.0
-        timeout-minutes: 5
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
       # --------------------------------------------------------
-      # Build Docker image
+      # 6. BUILD DOCKER IMAGE
       # --------------------------------------------------------
-      - name: Build container image
+
+      - name: Build Docker image
         run: |
           docker build \
-            --tag "$IMAGE_NAME:${GITHUB_SHA}" \
+            -t $IMAGE_NAME:${GITHUB_SHA} \
+            -t $IMAGE_NAME:latest \
             .
 
-      # --------------------------------------------------------
-      # Trivy vulnerability scan
-      # --------------------------------------------------------
-      - name: Scan image with Trivy
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: ${{ env.IMAGE_NAME }}:${{ github.sha }}
-          format: json
-          output: reports/trivy-image.json
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: '0'
 
       # --------------------------------------------------------
-      # Encrypt Trivy report using AES-256
+      # 7. INSTALL TRIVY
       # --------------------------------------------------------
-      - name: Encrypt Trivy report with AES-256
-        if: always() && github.event_name == 'push'
-        env:
-          REPORT_ENCRYPTION_KEY: ${{ secrets.REPORT_ENCRYPTION_KEY }}
+
+      - name: Install Trivy
         run: |
-          test -n "$REPORT_ENCRYPTION_KEY"
+          sudo apt-get update
+          sudo apt-get install -y wget apt-transport-https gnupg lsb-release
 
-          openssl enc \
-            -aes-256-cbc \
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key \
+            | gpg --dearmor \
+            | sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
+
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] \
+            https://aquasecurity.github.io/trivy-repo/deb \
+            $(lsb_release -sc) main" \
+            | sudo tee /etc/apt/sources.list.d/trivy.list
+
+          sudo apt-get update
+          sudo apt-get install -y trivy
+
+
+      # --------------------------------------------------------
+      # 8. TRIVY IMAGE SCAN
+      # --------------------------------------------------------
+
+      - name: Scan Docker image with Trivy
+        run: |
+          mkdir -p reports
+
+          trivy image \
+            --format json \
+            --output reports/trivy-image.json \
+            $IMAGE_NAME:${GITHUB_SHA}
+
+
+      # --------------------------------------------------------
+      # 9. DISPLAY TRIVY SUMMARY
+      # --------------------------------------------------------
+
+      - name: Display Trivy scan summary
+        run: |
+          trivy image \
+            --severity HIGH,CRITICAL \
+            $IMAGE_NAME:${GITHUB_SHA}
+
+
+      # --------------------------------------------------------
+      # 10. UPLOAD TRIVY REPORT AS ARTIFACT
+      # --------------------------------------------------------
+
+      - name: Upload Trivy report
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report-${{ github.sha }}
+          path: reports/trivy-image.json
+
+
+      # --------------------------------------------------------
+      # 11. ENCRYPT TRIVY REPORT
+      # --------------------------------------------------------
+
+      - name: Encrypt Trivy report
+        env:
+          TRIVY_REPORT_ENCRYPTION_KEY: ${{ secrets.TRIVY_REPORT_ENCRYPTION_KEY }}
+
+        run: |
+          test -n "$TRIVY_REPORT_ENCRYPTION_KEY"
+
+          openssl enc -aes-256-cbc \
             -pbkdf2 \
             -salt \
             -in reports/trivy-image.json \
             -out reports/trivy-image.json.enc \
-            -pass env:REPORT_ENCRYPTION_KEY
+            -pass env:TRIVY_REPORT_ENCRYPTION_KEY
+
+          ls -lh reports/
+
 
       # --------------------------------------------------------
-      # Upload security reports
+      # 12. UPLOAD ENCRYPTED REPORT TO NEXUS
       # --------------------------------------------------------
-      - name: Upload security reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: security-reports-${{ github.sha }}
-          path: reports/
-          if-no-files-found: warn
-          retention-days: 14
 
-      # --------------------------------------------------------
-      # Upload encrypted Trivy report
-      # --------------------------------------------------------
-      - name: Upload encrypted Trivy report
-        if: always() && github.event_name == 'push'
-        uses: actions/upload-artifact@v4
-        with:
-          name: encrypted-trivy-report-${{ github.sha }}
-          path: reports/trivy-image.json.enc
-          if-no-files-found: error
-          retention-days: 14
-
-
-  # ============================================================
-  # 2. PUBLISH IMAGE AND ENCRYPTED REPORT
-  # ============================================================
-  publish:
-    name: Publish approved image and encrypted report
-
-    needs: verify-and-scan
-
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-
-    runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
-      id-token: write
-
-    steps:
-
-      # --------------------------------------------------------
-      # Download encrypted Trivy report
-      # --------------------------------------------------------
-      - name: Download encrypted Trivy report
-        uses: actions/download-artifact@v4
-        with:
-          name: encrypted-trivy-report-${{ github.sha }}
-          path: reports
-
-      # --------------------------------------------------------
-      # Upload encrypted report to Nexus
-      # Temporarily disabled
-      # --------------------------------------------------------
       - name: Upload encrypted report to Nexus
-        if: github.event_name == 'push'
         env:
           NEXUS_URL: ${{ secrets.NEXUS_URL }}
           NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
           NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
-          NEXUS_REPOSITORY: trivy-reports
+          NEXUS_REPOSITORY: ${{ vars.NEXUS_REPOSITORY }}
+
         run: |
+          set -e
+
+          echo "Checking Nexus configuration..."
+
           test -n "$NEXUS_URL"
           test -n "$NEXUS_USERNAME"
           test -n "$NEXUS_PASSWORD"
           test -n "$NEXUS_REPOSITORY"
+
+          echo "Nexus URL configured"
+          echo "Nexus repository: $NEXUS_REPOSITORY"
+
+          echo "Testing Nexus connectivity..."
+
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            --connect-timeout 10 \
+            "$NEXUS_URL/service/rest/v1/status"
+
+          echo "Nexus connectivity successful"
+
+          echo "Uploading encrypted Trivy report..."
 
           curl \
             --fail \
@@ -205,51 +222,100 @@ jobs:
             --show-error \
             --user "$NEXUS_USERNAME:$NEXUS_PASSWORD" \
             --upload-file reports/trivy-image.json.enc \
-            "${NEXUS_URL%/}/repository/${NEXUS_REPOSITORY}/dev-radar-backend/${GITHUB_SHA}/trivy-image.json.enc"
+            "${NEXUS_URL%/}/repository/${NEXUS_REPOSITORY}/${IMAGE_NAME}/${GITHUB_SHA}/trivy-image.json.enc"
+
+          echo "Encrypted Trivy report uploaded successfully."
+
+
+# ============================================================
+# JOB 2
+# PUBLISH APPROVED IMAGE
+# ============================================================
+
+  publish:
+
+    name: Publish approved image and encrypted report
+
+    runs-on: ubuntu-latest
+
+    needs:
+      - verify-analyze-scan
+
+    steps:
 
       # --------------------------------------------------------
-      # Configure AWS credentials
+      # 1. CHECKOUT
       # --------------------------------------------------------
-      # NOTE:
-      # This uses AWS Access Key + Secret Key stored in
-      # GitHub Secrets. It is not OIDC authentication.
+
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+
       # --------------------------------------------------------
+      # 2. CONFIGURE AWS CREDENTIALS
+      # --------------------------------------------------------
+
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6.2.3
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ap-south-1
+          aws-region: ${{ env.AWS_REGION }}
+
 
       # --------------------------------------------------------
-      # Login to Amazon ECR
+      # 3. LOGIN TO AMAZON ECR PUBLIC
       # --------------------------------------------------------
-      - name: Log in to Amazon ECR
-        id: ecr-login
-        uses: aws-actions/amazon-ecr-login@v2
 
-      # --------------------------------------------------------
-      # Checkout source code
-      # --------------------------------------------------------
-      - name: Checkout source for image publication
-        uses: actions/checkout@v7
-
-      # --------------------------------------------------------
-      # Build and push Docker image to ECR
-      # --------------------------------------------------------
-      - name: Build and push SHA-tagged image to ECR
-        env:
-          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
-          ECR_REPOSITORY: 3-tier
-          IMAGE_TAG: ${{ github.sha }}
+      - name: Login to Amazon ECR Public
         run: |
-          echo "ECR Registry: $ECR_REGISTRY"
-          echo "ECR Repository: $ECR_REPOSITORY"
-          echo "Image Tag: $IMAGE_TAG"
+          aws ecr-public get-login-password \
+            --region $AWS_REGION \
+            | docker login \
+            --username AWS \
+            --password-stdin public.ecr.aws
 
+
+      # --------------------------------------------------------
+      # 4. BUILD DOCKER IMAGE
+      # --------------------------------------------------------
+
+      - name: Build Docker image
+        run: |
           docker build \
-            --tag "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
             .
 
+
+      # --------------------------------------------------------
+      # 5. PUSH IMAGE WITH COMMIT SHA
+      # --------------------------------------------------------
+
+      - name: Push image to ECR
+        run: |
           docker push \
-            "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+            $ECR_REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA
+
+
+      # --------------------------------------------------------
+      # 6. PUSH LATEST IMAGE
+      # --------------------------------------------------------
+
+      - name: Push latest image to ECR
+        run: |
+          docker push \
+            $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+
+      # --------------------------------------------------------
+      # 7. VERIFY IMAGE
+      # --------------------------------------------------------
+
+      - name: Verify published image
+        run: |
+          echo "Image successfully published:"
+          echo "$ECR_REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA"
+
+          echo "Latest image:"
+          echo "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
