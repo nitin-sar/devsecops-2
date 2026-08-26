@@ -187,7 +187,7 @@ jobs:
       # Temporarily disabled
       # --------------------------------------------------------
       - name: Upload encrypted report to Nexus
-        if: false
+        if: github.event_name == 'push'
         env:
           NEXUS_URL: ${{ secrets.NEXUS_URL }}
           NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
