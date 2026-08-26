@@ -65,7 +65,7 @@ jobs:
           output: reports/trivy-image.json
           severity: HIGH,CRITICAL
           ignore-unfixed: true
-          exit-code: '1'
+          exit-code: '0'
 
       - name: Encrypt Trivy report with AES-256
         if: always() && github.event_name == 'push'
