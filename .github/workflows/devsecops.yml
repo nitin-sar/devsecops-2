@@ -145,6 +145,7 @@ jobs:
           ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          test -n "$ECR_REPOSITORY"
-          docker build --tag "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" .
-          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+            echo "ECR_REPOSITORY=$ECR_REPOSITORY"
+            test -n "$ECR_REPOSITORY"
+            docker build --tag "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" .
+            docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
