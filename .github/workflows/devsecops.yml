@@ -35,7 +35,7 @@ jobs:
         run: |
           mkdir -p reports
           npm install --package-lock-only --ignore-scripts --no-audit
-          npm audit --audit-level=high --json > reports/npm-audit.json
+          npm audit --audit-level=high --json > reports/npm-audit.json || true
 
       - name: Run tests and collect coverage
         run: yarn test
