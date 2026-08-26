@@ -184,47 +184,47 @@ jobs:
       # --------------------------------------------------------
 
       - name: Upload encrypted report to Nexus
-        env:
-          NEXUS_URL: ${{ secrets.NEXUS_URL }}
-          NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
-          NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
-          NEXUS_REPOSITORY: ${{ vars.NEXUS_REPOSITORY }}
+  env:
+    NEXUS_URL: ${{ secrets.NEXUS_URL }}
+    NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
+    NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
+    NEXUS_REPOSITORY: trivy-reports
 
-        run: |
-          set -e
+  run: |
+    set -e
 
-          echo "Checking Nexus configuration..."
+    echo "Checking Nexus configuration..."
 
-          test -n "$NEXUS_URL"
-          test -n "$NEXUS_USERNAME"
-          test -n "$NEXUS_PASSWORD"
-          test -n "$NEXUS_REPOSITORY"
+    test -n "$NEXUS_URL"
+    test -n "$NEXUS_USERNAME"
+    test -n "$NEXUS_PASSWORD"
+    test -n "$NEXUS_REPOSITORY"
 
-          echo "Nexus URL configured"
-          echo "Nexus repository: $NEXUS_REPOSITORY"
+    echo "Nexus URL configured"
+    echo "Nexus repository: $NEXUS_REPOSITORY"
 
-          echo "Testing Nexus connectivity..."
+    echo "Testing Nexus connectivity..."
 
-          curl \
-            --fail \
-            --silent \
-            --show-error \
-            --connect-timeout 10 \
-            "$NEXUS_URL/service/rest/v1/status"
+    curl \
+      --fail \
+      --silent \
+      --show-error \
+      --connect-timeout 10 \
+      "$NEXUS_URL/service/rest/v1/status"
 
-          echo "Nexus connectivity successful"
+    echo "Nexus connectivity successful"
 
-          echo "Uploading encrypted Trivy report..."
+    echo "Uploading encrypted Trivy report..."
 
-          curl \
-            --fail \
-            --silent \
-            --show-error \
-            --user "$NEXUS_USERNAME:$NEXUS_PASSWORD" \
-            --upload-file reports/trivy-image.json.enc \
-            "${NEXUS_URL%/}/repository/${NEXUS_REPOSITORY}/${IMAGE_NAME}/${GITHUB_SHA}/trivy-image.json.enc"
+    curl \
+      --fail \
+      --silent \
+      --show-error \
+      --user "$NEXUS_USERNAME:$NEXUS_PASSWORD" \
+      --upload-file reports/trivy-image.json.enc \
+      "${NEXUS_URL%/}/repository/${NEXUS_REPOSITORY}/${IMAGE_NAME}/${GITHUB_SHA}/trivy-image.json.enc"
 
-          echo "Encrypted Trivy report uploaded successfully."
+    echo "Encrypted Trivy report uploaded successfully."
 
 
 # ============================================================
