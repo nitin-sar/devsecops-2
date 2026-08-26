@@ -112,6 +112,7 @@ jobs:
           path: reports
 
       - name: Upload encrypted report to Nexus
+        if: false
         env:
           NEXUS_URL: ${{ secrets.NEXUS_URL }}
           NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
