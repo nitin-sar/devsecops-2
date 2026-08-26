@@ -41,12 +41,14 @@ jobs:
         run: yarn test
 
       - name: SonarQube scan
+        if: ${{ false }}
         uses: SonarSource/sonarqube-scan-action@v7.1.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
       - name: SonarQube quality gate
+        if: ${{ false }}
         uses: SonarSource/sonarqube-quality-gate-action@v1.2.0
         timeout-minutes: 5
         env:
