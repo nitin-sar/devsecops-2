@@ -192,7 +192,7 @@ jobs:
           NEXUS_URL: ${{ secrets.NEXUS_URL }}
           NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
           NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
-          NEXUS_REPOSITORY: ${{ vars.NEXUS_REPOSITORY }}
+          NEXUS_REPOSITORY: trivy-reports
         run: |
           test -n "$NEXUS_URL"
           test -n "$NEXUS_USERNAME"
