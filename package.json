@@ -19,6 +19,7 @@
     "socket.io": "^2.3.0"
   },
   "devDependencies": {
+    "@sonar/scan": "^4.4.0",
     "jest": "^30.4.2",
     "nodemon": "2.0.2"
   }
