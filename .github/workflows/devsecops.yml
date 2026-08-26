@@ -14,49 +14,94 @@ env:
   IMAGE_NAME: dev-radar-backend
 
 jobs:
+
+  # ============================================================
+  # 1. VERIFY, ANALYZE AND SCAN
+  # ============================================================
   verify-and-scan:
     name: Verify, analyze, and scan
     runs-on: ubuntu-latest
+
     steps:
+
+      # --------------------------------------------------------
+      # Checkout source code
+      # --------------------------------------------------------
       - name: Checkout source
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
+      # --------------------------------------------------------
+      # Setup Node.js
+      # --------------------------------------------------------
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      # --------------------------------------------------------
+      # Install dependencies
+      # --------------------------------------------------------
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
+      # --------------------------------------------------------
+      # NPM Audit
+      # --------------------------------------------------------
       - name: Run npm audit
         run: |
           mkdir -p reports
-          npm install --package-lock-only --ignore-scripts --no-audit
-          npm audit --audit-level=high --json > reports/npm-audit.json || true
 
+          npm install \
+            --package-lock-only \
+            --ignore-scripts \
+            --no-audit
+
+          npm audit \
+            --audit-level=high \
+            --json > reports/npm-audit.json || true
+
+      # --------------------------------------------------------
+      # Run tests
+      # --------------------------------------------------------
       - name: Run tests and collect coverage
         run: yarn test
 
+      # --------------------------------------------------------
+      # SonarQube Scan
+      # Temporarily disabled
+      # --------------------------------------------------------
       - name: SonarQube scan
-        if: ${{ false }}
+        if: false
         uses: SonarSource/sonarqube-scan-action@v7.1.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
+      # --------------------------------------------------------
+      # SonarQube Quality Gate
+      # Temporarily disabled
+      # --------------------------------------------------------
       - name: SonarQube quality gate
-        if: ${{ false }}
+        if: false
         uses: SonarSource/sonarqube-quality-gate-action@v1.2.0
         timeout-minutes: 5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
+      # --------------------------------------------------------
+      # Build Docker image
+      # --------------------------------------------------------
       - name: Build container image
-        run: docker build --tag "$IMAGE_NAME:${GITHUB_SHA}" .
+        run: |
+          docker build \
+            --tag "$IMAGE_NAME:${GITHUB_SHA}" \
+            .
 
+      # --------------------------------------------------------
+      # Trivy vulnerability scan
+      # --------------------------------------------------------
       - name: Scan image with Trivy
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -67,18 +112,28 @@ jobs:
           ignore-unfixed: true
           exit-code: '0'
 
+      # --------------------------------------------------------
+      # Encrypt Trivy report using AES-256
+      # --------------------------------------------------------
       - name: Encrypt Trivy report with AES-256
         if: always() && github.event_name == 'push'
         env:
           REPORT_ENCRYPTION_KEY: ${{ secrets.REPORT_ENCRYPTION_KEY }}
         run: |
           test -n "$REPORT_ENCRYPTION_KEY"
-          openssl enc -aes-256-cbc -pbkdf2 -salt \
+
+          openssl enc \
+            -aes-256-cbc \
+            -pbkdf2 \
+            -salt \
             -in reports/trivy-image.json \
             -out reports/trivy-image.json.enc \
             -pass env:REPORT_ENCRYPTION_KEY
 
-      - name: Upload plaintext scan reports
+      # --------------------------------------------------------
+      # Upload security reports
+      # --------------------------------------------------------
+      - name: Upload security reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -87,6 +142,9 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      # --------------------------------------------------------
+      # Upload encrypted Trivy report
+      # --------------------------------------------------------
       - name: Upload encrypted Trivy report
         if: always() && github.event_name == 'push'
         uses: actions/upload-artifact@v4
@@ -96,21 +154,38 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+
+  # ============================================================
+  # 2. PUBLISH IMAGE AND ENCRYPTED REPORT
+  # ============================================================
   publish:
     name: Publish approved image and encrypted report
+
     needs: verify-and-scan
+
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
     runs-on: ubuntu-latest
+
     permissions:
       contents: read
       id-token: write
+
     steps:
+
+      # --------------------------------------------------------
+      # Download encrypted Trivy report
+      # --------------------------------------------------------
       - name: Download encrypted Trivy report
         uses: actions/download-artifact@v4
         with:
           name: encrypted-trivy-report-${{ github.sha }}
           path: reports
 
+      # --------------------------------------------------------
+      # Upload encrypted report to Nexus
+      # Temporarily disabled
+      # --------------------------------------------------------
       - name: Upload encrypted report to Nexus
         if: false
         env:
@@ -119,33 +194,62 @@ jobs:
           NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
           NEXUS_REPOSITORY: ${{ vars.NEXUS_REPOSITORY }}
         run: |
-          test -n "$NEXUS_URL" && test -n "$NEXUS_USERNAME" && test -n "$NEXUS_PASSWORD" && test -n "$NEXUS_REPOSITORY"
-          curl --fail --silent --show-error \
+          test -n "$NEXUS_URL"
+          test -n "$NEXUS_USERNAME"
+          test -n "$NEXUS_PASSWORD"
+          test -n "$NEXUS_REPOSITORY"
+
+          curl \
+            --fail \
+            --silent \
+            --show-error \
             --user "$NEXUS_USERNAME:$NEXUS_PASSWORD" \
             --upload-file reports/trivy-image.json.enc \
             "${NEXUS_URL%/}/repository/${NEXUS_REPOSITORY}/dev-radar-backend/${GITHUB_SHA}/trivy-image.json.enc"
 
-      - name: Configure AWS credentials through OIDC
+      # --------------------------------------------------------
+      # Configure AWS credentials
+      # --------------------------------------------------------
+      # NOTE:
+      # This uses AWS Access Key + Secret Key stored in
+      # GitHub Secrets. It is not OIDC authentication.
+      # --------------------------------------------------------
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6.2.3
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ap-south-1
 
+      # --------------------------------------------------------
+      # Login to Amazon ECR
+      # --------------------------------------------------------
       - name: Log in to Amazon ECR
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
+      # --------------------------------------------------------
+      # Checkout source code
+      # --------------------------------------------------------
       - name: Checkout source for image publication
         uses: actions/checkout@v7
 
+      # --------------------------------------------------------
+      # Build and push Docker image to ECR
+      # --------------------------------------------------------
       - name: Build and push SHA-tagged image to ECR
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
-          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+          ECR_REPOSITORY: 3-tier
           IMAGE_TAG: ${{ github.sha }}
         run: |
-            echo "ECR_REPOSITORY=$ECR_REPOSITORY"
-            test -n "$ECR_REPOSITORY"
-            docker build --tag "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" .
-            docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          echo "ECR Registry: $ECR_REGISTRY"
+          echo "ECR Repository: $ECR_REPOSITORY"
+          echo "Image Tag: $IMAGE_TAG"
+
+          docker build \
+            --tag "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
+            .
+
+          docker push \
+            "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
