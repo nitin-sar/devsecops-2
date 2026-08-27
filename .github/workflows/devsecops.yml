@@ -237,24 +237,60 @@ jobs:
           path: reports/
 
 
+            # ==========================================================
+      # 15. ENCRYPT TRIVY REPORTS
       # ==========================================================
-      # 15. ENCRYPT TRIVY REPORT
-      # ==========================================================
-
       - name: Encrypt Trivy reports
         env:
           TRIVY_REPORT_ENCRYPTION_KEY: ${{ secrets.TRIVY_REPORT_ENCRYPTION_KEY }}
           REPORT_ENCRYPTION_KEY: ${{ secrets.REPORT_ENCRYPTION_KEY }}
-
         run: |
-
           set -e
 
           echo "Checking encryption keys..."
-
           test -n "$TRIVY_REPORT_ENCRYPTION_KEY"
           test -n "$REPORT_ENCRYPTION_KEY"
 
-          echo "Encrypting Trivy image report..."
+          mkdir -p encrypted-reports
 
-          openssl enc \
+          echo "Encrypting Trivy filesystem report..."
+          openssl enc -aes-256-cbc -salt -pbkdf2 \
+            -in reports/trivy-fs.json \
+            -out encrypted-reports/trivy-fs.json.enc \
+            -pass env:TRIVY_REPORT_ENCRYPTION_KEY
+
+          echo "Encrypting Trivy image report..."
+          openssl enc -aes-256-cbc -salt -pbkdf2 \
+            -in reports/trivy-image.json \
+            -out encrypted-reports/trivy-image.json.enc \
+            -pass env:REPORT_ENCRYPTION_KEY
+
+          echo "Encrypted reports:"
+          ls -lh encrypted-reports/
+
+                # ==========================================================
+      # 16. UPLOAD ENCRYPTED REPORTS TO NEXUS
+      # ==========================================================
+      - name: Upload encrypted reports to Nexus
+        env:
+          NEXUS_URL: ${{ secrets.NEXUS_URL }}
+          NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
+          NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
+          NEXUS_REPOSITORY: ${{ secrets.NEXUS_REPOSITORY }}
+        run: |
+          set -e
+
+          echo "Uploading encrypted Trivy reports to Nexus..."
+
+          for file in encrypted-reports/*; do
+            filename=$(basename "$file")
+
+            echo "Uploading $filename..."
+
+            curl --fail --silent --show-error \
+              -u "$NEXUS_USERNAME:$NEXUS_PASSWORD" \
+              --upload-file "$file" \
+              "$NEXUS_URL/repository/$NEXUS_REPOSITORY/$filename"
+          done
+
+          echo "All encrypted Trivy reports uploaded successfully to Nexus."
