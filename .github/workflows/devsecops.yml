@@ -103,8 +103,8 @@ jobs:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         with:
           args: >
-            -Dsonar.projectKey=dev-radar-backend
-            -Dsonar.projectName=dev-radar-backend
+            -Dsonar.projectKey=devsecops-2
+            -Dsonar.projectName=devsecops-2
             -Dsonar.sources=.
             -Dsonar.exclusions=node_modules/**,coverage/**,reports/**
             -Dsonar.qualitygate.wait=true
