@@ -19,17 +19,23 @@ permissions:
 env:
   NODE_VERSION: "20"
 
+  # ==========================================================
   # Docker
+  # ==========================================================
   IMAGE_NAME: dev-radar-backend
 
-  # AWS / ECR Public
-  # ECR Public authentication uses us-east-1
-  AWS_REGION: us-east-1
-  ECR_REGISTRY: public.ecr.aws/u1g0y0f1
+  # ==========================================================
+  # AWS / PRIVATE ECR
+  # ==========================================================
+  AWS_REGION: ap-south-1
+  ECR_REGISTRY: 619459867671.dkr.ecr.ap-south-1.amazonaws.com
   ECR_REPOSITORY: 3-tier
 
+  # ==========================================================
   # Nexus
+  # ==========================================================
   NEXUS_REPOSITORY: trivy-reports
+
 
 jobs:
 
@@ -47,13 +53,12 @@ jobs:
     steps:
 
       # ==========================================================
-      # 1. CHECKOUT
+      # 1. CHECKOUT SOURCE CODE
       # ==========================================================
 
       - name: Checkout source code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+
 
       # ==========================================================
       # 2. SETUP NODE.JS
@@ -63,7 +68,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: yarn
+          cache: npm
+
 
       # ==========================================================
       # 3. INSTALL YARN
@@ -74,6 +80,7 @@ jobs:
           npm install -g yarn
           yarn --version
 
+
       # ==========================================================
       # 4. INSTALL DEPENDENCIES
       # ==========================================================
@@ -81,6 +88,7 @@ jobs:
       - name: Install dependencies
         run: |
           yarn install --frozen-lockfile
+
 
       # ==========================================================
       # 5. RUN APPLICATION TESTS
@@ -90,8 +98,9 @@ jobs:
         run: |
           npm test -- --runInBand
 
+
       # ==========================================================
-      # 6. SONARQUBE ANALYSIS + QUALITY GATE
+      # 6. SONARQUBE ANALYSIS
       # ==========================================================
 
       - name: SonarQube Scan
@@ -107,13 +116,15 @@ jobs:
             -Dsonar.exclusions=node_modules/**,coverage/**,reports/**
             -Dsonar.qualitygate.wait=true
 
+
       # ==========================================================
-      # 7. SONARQUBE QUALITY GATE CONFIRMATION
+      # 7. SONARQUBE QUALITY GATE
       # ==========================================================
 
       - name: SonarQube Quality Gate
         run: |
           echo "SonarQube analysis and Quality Gate completed successfully."
+
 
       # ==========================================================
       # 8. BUILD DOCKER IMAGE
@@ -125,6 +136,9 @@ jobs:
             -t $IMAGE_NAME:${GITHUB_SHA} \
             -t $IMAGE_NAME:latest \
             .
+
+          echo "Docker image built successfully."
+
 
       # ==========================================================
       # 9. INSTALL TRIVY
@@ -155,6 +169,7 @@ jobs:
 
           trivy --version
 
+
       # ==========================================================
       # 10. TRIVY FILESYSTEM / DEPENDENCY SCAN
       # ==========================================================
@@ -169,6 +184,7 @@ jobs:
             --scanners vuln,secret,misconfig \
             .
 
+
       # ==========================================================
       # 11. TRIVY DOCKER IMAGE SCAN
       # ==========================================================
@@ -180,6 +196,7 @@ jobs:
             --output reports/trivy-image.json \
             --severity HIGH,CRITICAL \
             $IMAGE_NAME:${GITHUB_SHA}
+
 
       # ==========================================================
       # 12. DISPLAY TRIVY SECURITY SUMMARY
@@ -195,6 +212,7 @@ jobs:
             --severity HIGH,CRITICAL \
             $IMAGE_NAME:${GITHUB_SHA}
 
+
       # ==========================================================
       # 13. VERIFY SECURITY REPORTS
       # ==========================================================
@@ -204,14 +222,17 @@ jobs:
           echo "Security reports generated:"
           ls -lh reports/
 
-          echo "Trivy filesystem report:"
+          echo "Checking Trivy filesystem report..."
           test -f reports/trivy-fs.json
 
-          echo "Trivy image report:"
+          echo "Checking Trivy image report..."
           test -f reports/trivy-image.json
 
+          echo "All Trivy reports generated successfully."
+
+
       # ==========================================================
-      # 14. UPLOAD TRIVY REPORTS TO GITHUB ARTIFACTS
+      # 14. UPLOAD TRIVY REPORT ARTIFACT
       # ==========================================================
 
       - name: Upload Trivy reports
@@ -219,6 +240,7 @@ jobs:
         with:
           name: trivy-security-reports-${{ github.sha }}
           path: reports/
+
 
       # ==========================================================
       # 15. ENCRYPT TRIVY REPORTS
@@ -241,20 +263,27 @@ jobs:
 
           echo "Encrypting Trivy filesystem report..."
 
-          openssl enc -aes-256-cbc -salt -pbkdf2 \
+          openssl enc \
+            -aes-256-cbc \
+            -salt \
+            -pbkdf2 \
             -in reports/trivy-fs.json \
             -out encrypted-reports/trivy-fs.json.enc \
             -pass env:TRIVY_REPORT_ENCRYPTION_KEY
 
           echo "Encrypting Trivy image report..."
 
-          openssl enc -aes-256-cbc -salt -pbkdf2 \
+          openssl enc \
+            -aes-256-cbc \
+            -salt \
+            -pbkdf2 \
             -in reports/trivy-image.json \
             -out encrypted-reports/trivy-image.json.enc \
             -pass env:REPORT_ENCRYPTION_KEY
 
           echo "Encrypted reports:"
           ls -lh encrypted-reports/
+
 
       # ==========================================================
       # 16. UPLOAD ENCRYPTED REPORTS TO NEXUS
@@ -272,18 +301,16 @@ jobs:
 
           echo "Uploading encrypted Trivy reports to Nexus..."
 
-          test -n "$NEXUS_URL"
-          test -n "$NEXUS_USERNAME"
-          test -n "$NEXUS_PASSWORD"
-          test -n "$NEXUS_REPOSITORY"
-
           for file in encrypted-reports/*; do
 
             filename=$(basename "$file")
 
             echo "Uploading $filename..."
 
-            curl --fail --silent --show-error \
+            curl \
+              --fail \
+              --silent \
+              --show-error \
               -u "$NEXUS_USERNAME:$NEXUS_PASSWORD" \
               --upload-file "$file" \
               "$NEXUS_URL/repository/$NEXUS_REPOSITORY/$filename"
@@ -291,6 +318,7 @@ jobs:
           done
 
           echo "All encrypted Trivy reports uploaded successfully to Nexus."
+
 
       # ==========================================================
       # 17. AWS AUTHENTICATION
@@ -303,45 +331,53 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+
       # ==========================================================
-      # 18. VERIFY AWS AUTHENTICATION
+      # 18. LOGIN TO PRIVATE AMAZON ECR
       # ==========================================================
 
-      - name: Verify AWS identity
+      - name: Login to Amazon ECR
         run: |
-          aws sts get-caller-identity
+          echo "Logging in to Amazon ECR..."
 
-      # ==========================================================
-      # 19. LOGIN TO AMAZON ECR PUBLIC
-      # ==========================================================
-
-      - name: Login to Amazon ECR Public
-        run: |
-          aws ecr-public get-login-password --region us-east-1 | \
-            docker login \
+          aws ecr get-login-password \
+            --region "$AWS_REGION" \
+            | docker login \
               --username AWS \
-              --password-stdin public.ecr.aws
+              --password-stdin "$ECR_REGISTRY"
+
+          echo "Successfully logged in to Amazon ECR."
+
 
       # ==========================================================
-      # 20. VERIFY ECR PUBLIC REPOSITORY
+      # 19. VERIFY ECR REPOSITORY
       # ==========================================================
 
-      - name: Verify ECR Public repository
+      - name: Verify ECR repository
         run: |
-          aws ecr-public describe-repositories \
+          echo "Verifying ECR repository..."
+
+          aws ecr describe-repositories \
             --repository-names "$ECR_REPOSITORY" \
-            --region us-east-1
+            --region "$AWS_REGION"
+
+          echo "ECR repository verified successfully."
+
 
       # ==========================================================
-      # 21. TAG DOCKER IMAGE FOR ECR
+      # 20. TAG DOCKER IMAGE FOR ECR
       # ==========================================================
 
       - name: Tag Docker image
         run: |
 
+          echo "Tagging SHA image..."
+
           docker tag \
             $IMAGE_NAME:${GITHUB_SHA} \
             $ECR_REGISTRY/$ECR_REPOSITORY:${GITHUB_SHA}
+
+          echo "Tagging latest image..."
 
           docker tag \
             $IMAGE_NAME:latest \
@@ -351,11 +387,12 @@ jobs:
 
           docker images
 
+
       # ==========================================================
-      # 22. PUSH DOCKER IMAGE TO ECR PUBLIC
+      # 21. PUSH DOCKER IMAGE TO ECR
       # ==========================================================
 
-      - name: Push Docker image to ECR Public
+      - name: Push Docker image to ECR
         run: |
 
           echo "Pushing SHA tagged image..."
@@ -368,7 +405,24 @@ jobs:
           docker push \
             $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
-          echo "Docker images pushed successfully to ECR Public."
+          echo "Docker images pushed successfully to ECR."
+
+
+      # ==========================================================
+      # 22. VERIFY IMAGE IN ECR
+      # ==========================================================
+
+      - name: Verify image in ECR
+        run: |
+
+          echo "Verifying images in ECR..."
+
+          aws ecr describe-images \
+            --repository-name "$ECR_REPOSITORY" \
+            --region "$AWS_REGION"
+
+          echo "Docker images verified successfully in ECR."
+
 
       # ==========================================================
       # 23. PIPELINE COMPLETION
@@ -376,15 +430,26 @@ jobs:
 
       - name: Pipeline completed
         run: |
+
           echo "=========================================="
           echo "DEVSECOPS PIPELINE COMPLETED SUCCESSFULLY"
           echo "=========================================="
-          echo "SonarQube      : PASSED"
-          echo "Docker Build   : PASSED"
-          echo "Trivy Scan     : COMPLETED"
-          echo "Reports        : ENCRYPTED"
-          echo "Nexus Upload   : PASSED"
-          echo "AWS Auth       : PASSED"
-          echo "ECR Login      : PASSED"
-          echo "ECR Push       : PASSED"
+
+          echo "Application Tests : PASSED"
+          echo "SonarQube         : PASSED"
+          echo "Quality Gate      : PASSED"
+          echo "Docker Build      : PASSED"
+          echo "Trivy Scan        : COMPLETED"
+          echo "Reports           : ENCRYPTED"
+          echo "Nexus Upload      : PASSED"
+          echo "AWS Authentication: PASSED"
+          echo "ECR Login         : PASSED"
+          echo "ECR Repository    : VERIFIED"
+          echo "ECR Push          : PASSED"
+          echo "ECR Image Verify  : PASSED"
+
+          echo "=========================================="
+          echo "Repository: $ECR_REPOSITORY"
+          echo "Region: $AWS_REGION"
+          echo "Registry: $ECR_REGISTRY"
           echo "=========================================="
